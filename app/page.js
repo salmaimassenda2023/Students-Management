@@ -114,7 +114,7 @@ export default function Home() {
                 >
                     <option value="Homme">Homme</option>
                     <option value="Femme">Femme</option>
-                    <option value="Autre">Autre</option>
+
                 </select>
                 <button
                     type="submit"
