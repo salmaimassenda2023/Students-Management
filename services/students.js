@@ -1,5 +1,5 @@
 // services/students.js
-import { supabase } from "../supabase/config";
+import { supabase } from "@/supabase/config";
 
 //  CREATE
 export const createStudent = async (studentData) => {
