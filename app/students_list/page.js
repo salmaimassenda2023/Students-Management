@@ -3,8 +3,9 @@
 import { useEffect, useState } from "react";
 import { FaEdit, FaTrash } from "react-icons/fa";
 import { useRouter } from "next/navigation";
+// No need to import jwtDecode here anymore!
 
-export default function StudentsPage() { // Renamed from Home for clarity
+export default function StudentsPage() {
     const router = useRouter();
 
     const [students, setStudents] = useState([]);
@@ -17,6 +18,10 @@ export default function StudentsPage() { // Renamed from Home for clarity
     const [editId, setEditId] = useState(null);
     const [isLoadingPage, setIsLoadingPage] = useState(true);
     const [idToken, setIdToken] = useState(null); // State to hold the Firebase ID token
+
+    // NEW State: To store decoded user info (email and role)
+    const [currentUserInfo, setCurrentUserInfo] = useState({ email: '', role: '' });
+    const [showUserInfo, setShowUserInfo] = useState(false); // To toggle visibility of user info
 
     // Function to get the token from localStorage
     const getAuthToken = () => {
@@ -33,14 +38,54 @@ export default function StudentsPage() { // Renamed from Home for clarity
             router.push('/signin'); // No token found, redirect to sign-in
         } else {
             setIdToken(token); // Token found, set it in state
-            setIsLoadingPage(false); // Ready to load data
+            // No longer setting isLoadingPage to false here directly
+            // It will be set after both students and user info are loaded
         }
     }, [router]);
 
-    // Load students ONLY if idToken is available
+    // NEW useEffect: Fetch current user info from your API when idToken is available
+    useEffect(() => {
+        const fetchCurrentUserInfo = async () => {
+            if (!idToken) return; // Wait for token to be set
+
+            try {
+                const res = await fetch("/api/user-profile-setup", { // <-- Call your API here
+                    headers: {
+                        'Authorization': `Bearer ${idToken}`,
+                    },
+                });
+
+                if (res.status === 401 || res.status === 403) {
+                    console.warn("Session expired or unauthorized to fetch user info. Redirecting to signin.");
+                    localStorage.removeItem('firebaseIdToken');
+                    router.push("/signin");
+                    return;
+                }
+                if (!res.ok) throw new Error("Erreur chargement informations utilisateur: " + res.statusText);
+
+                const data = await res.json();
+                setCurrentUserInfo({
+                    email: data.user.email || 'N/A',
+                    role: data.user.role || 'non assigné', // Use the role from the API response
+                });
+            } catch (error) {
+                console.error("Failed to load user info from API:", error.message);
+                // Decide how to handle this error: maybe just show N/A or force logout
+                localStorage.removeItem('firebaseIdToken'); // Consider logging out if user info fetch fails
+                router.push('/signin');
+            }
+        };
+
+        if (idToken) {
+            fetchCurrentUserInfo();
+        }
+    }, [idToken, router]); // Re-run when idToken changes
+
+    // Load students ONLY if idToken is available AND user info has been set
     useEffect(() => {
         const loadStudents = async () => {
-            if (!idToken) return; // Wait for token to be set
+            // Only fetch students if idToken is available AND user info has been fetched
+            if (!idToken || !currentUserInfo.email) return;
 
             try {
                 const res = await fetch("/api/students", {
@@ -49,7 +94,6 @@ export default function StudentsPage() { // Renamed from Home for clarity
                     },
                 });
                 if (res.status === 401 || res.status === 403) {
-                    // Token expired or invalid, redirect to login and clear token
                     console.warn("Session expired or unauthorized. Redirecting to signin.");
                     localStorage.removeItem('firebaseIdToken');
                     router.push("/signin");
@@ -60,14 +104,15 @@ export default function StudentsPage() { // Renamed from Home for clarity
                 setStudents(data);
             } catch (err) {
                 console.error("Failed to load students:", err.message);
-                // Consider redirecting here as well if it's a critical network error
+            } finally {
+                setIsLoadingPage(false); // Data loaded, stop loading page
             }
         };
 
-        if (idToken) { // Only fetch if we have an ID token
+        if (idToken && currentUserInfo.email) { // Only fetch if we have an ID token AND user info
             loadStudents();
         }
-    }, [idToken, router]); // Re-run when idToken or router changes
+    }, [idToken, currentUserInfo.email, router]); // Re-run when idToken, user info, or router changes
 
     const handleChange = (e) => {
         setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -153,19 +198,19 @@ export default function StudentsPage() { // Renamed from Home for clarity
         router.push('/signin'); // Redirect to login page
     };
 
+    // Toggle user info visibility
+    const toggleUserInfo = () => {
+        setShowUserInfo(!showUserInfo);
+    };
+
     // Show loading state if token is not yet checked, or data is being loaded for the first time
-    if (isLoadingPage) {
+    // We now wait for both idToken AND currentUserInfo to be populated before showing content
+    if (isLoadingPage || !idToken || !currentUserInfo.email) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 text-black dark:text-white">
-                <p className="text-xl font-semibold">Vérification de la session...</p>
+                <p className="text-xl font-semibold">Vérification de la session et chargement des données...</p>
             </div>
         );
-    }
-
-    // If idToken is null (meaning not authenticated after initial check and not in loading state),
-    // we are in the process of redirecting. Render nothing.
-    if (!idToken) {
-        return null;
     }
 
     return (
@@ -174,13 +219,37 @@ export default function StudentsPage() { // Renamed from Home for clarity
                 <h1 className="text-3xl font-bold">
                     {editId ? "Modifier un étudiant" : "Ajouter un étudiant"}
                 </h1>
-                <button
-                    onClick={handleLogout}
-                    className="bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded"
-                >
-                    Déconnexion
-                </button>
+                <div className="flex space-x-4">
+                    {/* NEW BUTTON: Show User Info */}
+                    <button
+                        onClick={toggleUserInfo}
+                        className="bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded"
+                    >
+                        {showUserInfo ? "Masquer Infos" : "Afficher Infos Utilisateur"}
+                    </button>
+                    <button
+                        onClick={handleLogout}
+                        className="bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded"
+                    >
+                        Déconnexion
+                    </button>
+                </div>
             </div>
+
+            {/* NEW: Display User Information if showUserInfo is true */}
+            {showUserInfo && (
+                <div className="w-full max-w-md bg-gray-100 dark:bg-gray-800 p-6 rounded-lg shadow-md mb-8">
+                    <h2 className="text-xl font-semibold mb-2">Informations Utilisateur</h2>
+                    <p>
+                        <strong className="font-medium">Email:</strong> {currentUserInfo.email}
+                    </p>
+                    <p>
+                        <strong className="font-medium">Rôle:</strong> {currentUserInfo.role}
+                    </p>
+
+                </div>
+            )}
+
 
             <form onSubmit={handleSubmit} className="w-full max-w-md flex flex-col gap-4">
                 <input

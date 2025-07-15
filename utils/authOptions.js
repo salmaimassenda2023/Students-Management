@@ -2,8 +2,7 @@
 
 import NextAuth from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
-// import { signInWithEmailAndPassword } from "firebase/auth"; // REMOVE THIS - client-side
-// import { auth } from "@/firebase/firebase-client"; // REMOVE THIS - client-side
+
 
 // IMPORTANT: Import the Firebase Admin SDK's auth instance
 import { auth as adminAuth } from "@/firebase/firebase-admin"; // Alias to avoid name conflict with client-side 'auth' if it were still imported

@@ -1,36 +1,47 @@
 // utils/authMiddleware.js
-import { auth } from '@/firebase/firebase-admin'; // Your Firebase Admin SDK setup
+import { auth as adminAuth } from '@/firebase/firebase-admin'; // Ensure this path is correct, e.g., '@/lib/firebase-admin'
 import { NextResponse } from 'next/server';
 
-export const protectApi = (handler) => async (req, context) => {
+// This higher-order function takes the required roles and returns the actual middleware.
+export const protectApi = (requiredRoles = []) => {
+    // This is the actual middleware that wraps your API route handler.
+    // It accepts the 'handler' (your GET, POST, PUT, DELETE function).
+    // The 'handler' parameter here IS the async (req, context) => {...} function
+    // that you export in your route.js file.
+    return (handler) => { // No 'async' here on this outer return
+        // This is the function that Next.js will actually invoke when the route is hit.
+        // It's the middleware's execution logic.
+        return async (req, context) => { // This inner function MUST be async
+            const authHeader = req.headers.get('authorization');
+            const idToken = authHeader?.split('Bearer ')[1];
 
-    // 1. Get the ID token from the request header
-    const authHeader = req.headers.get('authorization');
-    console.log("protectApi: Authorization header received:", authHeader ? "Present" : "Missing");
+            if (!idToken) {
+                console.warn('No authentication token provided.');
+                return NextResponse.json({ message: 'No authentication token provided.' }, { status: 401 });
+            }
 
-    const idToken = authHeader?.split('Bearer ')[1];
+            try {
+                const decodedToken = await adminAuth.verifyIdToken(idToken);
+                const userRole = decodedToken.role;
 
-    if (!idToken) {
-        return NextResponse.json({ message: 'No authentication token provided.' }, { status: 401 });
-    }
+                if (requiredRoles.length > 0 && (!userRole || !requiredRoles.includes(userRole))) {
+                    console.warn(`Forbidden: User ${decodedToken.uid} with role '${userRole}' attempted to access route requiring roles: [${requiredRoles.join(', ')}]`);
+                    return NextResponse.json({ message: 'Forbidden: Insufficient permissions.' }, { status: 403 });
+                }
 
+                // Correctly pass the request and context (with the added user info)
+                // to your actual API route handler and await its result.
+                return await handler(req, { ...context, user: decodedToken });
 
-    try {
-        // 2. Verify the ID token using Firebase Admin SDK
-        const decodedToken = await auth.verifyIdToken(idToken);
-        console.log("protectApi: Token successfully verified. User UID:", decodedToken.uid); // Log successful verification
-
-        // 3. If verification is successful, proceed to the actual API handler
-        return handler(req, { ...context, user: decodedToken });
-
-    } catch (error) {
-        console.error('protectApi: Error verifying Firebase ID token:', error.message); // Log the specific error message
-        // Differentiate between common token errors (403) and other server errors (500)
-        if (error.code === 'auth/id-token-expired' || error.code === 'auth/argument-error' || error.code === 'auth/invalid-credential') {
-            console.warn("protectApi: Token is invalid or expired. Returning 403.");
-            return NextResponse.json({ message: 'Unauthorized: Invalid or expired token.' }, { status: 403 });
-        }
-        console.error("protectApi: Unexpected error during token verification. Returning 500.");
-        return NextResponse.json({ message: 'Internal Server Error: Token verification failed.' }, { status: 500 });
-    }
+            } catch (error) {
+                console.error('Error verifying Firebase ID token in middleware:', error.message);
+                if (error.code === 'auth/id-token-expired') {
+                    return NextResponse.json({ message: 'Unauthorized: Session expired.', code: 'token-expired' }, { status: 401 });
+                } else if (error.code === 'auth/argument-error' || error.code === 'auth/invalid-credential' || error.code === 'auth/invalid-id-token') {
+                    return NextResponse.json({ message: 'Unauthorized: Invalid token.', code: 'invalid-token' }, { status: 401 });
+                }
+                return NextResponse.json({ message: 'Internal Server Error: Authentication failed.', code: 'server-error' }, { status: 500 });
+            }
+        };
+    };
 };

@@ -1,12 +1,12 @@
+// app/api/students/route.js
+import prisma from '../../../utils/prisma'
 import { NextResponse } from 'next/server';
-import { protectApi } from '@/utils/middleware'; // Import the new protectApi
-import { fetchStudents, createStudent} from "@/services/students"; // Your existing service functions
+import { protectApi } from '@/utils/middleware';
 
-// Wrap your API handlers with protectApi
-export const GET = protectApi(async (req, context) => {
+export const GET = protectApi([])(async () => { // <-- Corrected: Pass [] for roles
     // 'context.user' will contain the decoded Firebase token here
     try {
-        const students = await fetchStudents();
+        const students = await prisma.student.findMany({})
         return NextResponse.json(students);
     } catch (error) {
         console.error("Error fetching students:", error);
@@ -14,11 +14,19 @@ export const GET = protectApi(async (req, context) => {
     }
 });
 
-export const POST = protectApi(async (req, context) => {
+export const POST = protectApi([])(async (req, context) => { // <-- Corrected: Pass [] for roles
     // 'context.user' will contain the decoded Firebase token here
     try {
         const body = await req.json();
-        const newStudent = await createStudent(body);
+        const { name, email, phone_number, gender } = body;
+        const newStudent = await prisma.student.create({
+            data: {
+                name: name,
+                email: email,
+                phone_number: phone_number,
+                gender: gender,
+            },
+        })
         return NextResponse.json(newStudent);
     } catch (error) {
         console.error("Error adding student:", error);
@@ -26,7 +34,3 @@ export const POST = protectApi(async (req, context) => {
     }
 });
 
-// Add OPTIONS if you need to handle CORS preflight requests for POST/PUT/DELETE
-export async function OPTIONS() {
-    return NextResponse.json({}, { status: 200 });
-}

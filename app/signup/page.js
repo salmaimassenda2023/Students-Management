@@ -8,6 +8,8 @@ import {
     GoogleAuthProvider,
     signInWithPopup
 } from "firebase/auth";
+// If you are using next-auth for session management, keep this import.
+// Otherwise, if Firebase Auth is the only session manager, you might not need `signIn` from `next-auth/react`.
 import { signIn } from "next-auth/react";
 
 export default function SignUpPage() {
@@ -15,27 +17,58 @@ export default function SignUpPage() {
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [error, setError] = useState(null);
-    const [loading, setLoading] = useState(false);
-    const [googleLoading, setGoogleLoading] = useState(false);
+    const [loading, setLoading] = useState(false); // For email/password signup
+    const [googleLoading, setGoogleLoading] = useState(false); // For Google signup
 
-    const handleSignUp = async (e) => {
+    /**
+     * Handles setting up the user's profile in Supabase and
+     * assigning their default role via Firebase Custom Claims.
+     * @param {Object} firebaseUser - The Firebase User object (from userCredential.user)
+     */
+    const setupUserProfileAndRole = async (firebaseUser) => {
+        try {
+            const res = await fetch('/api/user-profile-setup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ uid: firebaseUser.uid, email: firebaseUser.email }),
+            });
+
+            if (!res.ok) {
+                const data = await res.json();
+                throw new Error(data.message || "Failed to set up user profile and default role.");
+            }
+
+            // Force refresh token to get the newly assigned custom claims
+            // This is crucial for the client-side AuthContext to pick up the role immediately.
+            await firebaseUser.getIdTokenResult(true);
+
+            return true; // Indicate success
+        } catch (setupError) {
+            console.error("Error in setupUserProfileAndRole:", setupError);
+            throw setupError; // Re-throw to be caught by the calling function
+        }
+    };
+
+    const handleEmailPasswordSignUp = async (e) => {
         e.preventDefault();
         setLoading(true);
         setError(null);
 
         try {
             const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+            const firebaseUser = userCredential.user;
 
-            if (userCredential?.user) {
-                // L'utilisateur est déjà connecté automatiquement par Firebase.
-                router.push("/");
-            } else {
-                setError("Inscription réussie mais impossible de se connecter automatiquement.");
-            }
+            await setupUserProfileAndRole(firebaseUser); // Call the common function
 
+            router.push("/students_list"); // Redirect on success
         } catch (error) {
-            console.error("Erreur d'inscription:", error);
-            setError(error.message);
+            console.error("Erreur d'inscription (Email/Password):", error);
+            // Firebase Auth errors often have a 'code' and 'message'
+            if (error.code && error.message) {
+                setError(`Inscription échouée: ${error.message}`);
+            } else {
+                setError("Une erreur est survenue lors de l'inscription.");
+            }
         } finally {
             setLoading(false);
         }
@@ -48,22 +81,40 @@ export default function SignUpPage() {
         try {
             const provider = new GoogleAuthProvider();
             const result = await signInWithPopup(auth, provider);
+            const firebaseUser = result.user;
 
-            const idToken = await result.user.getIdToken();
+            // Call the common function to set up profile and role
+            await setupUserProfileAndRole(firebaseUser);
 
-            const res = await signIn("firebase-google", {
-                idToken,
+            // If you are using next-auth, you might still want this for session management with next-auth.
+            // However, with Firebase handling the primary auth, this part might be redundant
+            // or need re-evaluation based on how next-auth is integrated with Firebase.
+            // If next-auth is purely for session on your Next.js backend, and Firebase provides the token,
+            // you might just redirect directly like the email/password flow.
+            // For now, keeping it as per your original code.
+            const nextAuthRes = await signIn("firebase-google", {
+                idToken: await firebaseUser.getIdToken(), // Get the ID token, potentially with new claims
                 redirect: false,
             });
 
-            if (res?.error) {
-                setError("Inscription Google échouée : " + res.error);
-            } else if (res?.ok) {
-                router.push("/");
+            if (nextAuthRes?.error) {
+                setError("Inscription Google échouée : " + nextAuthRes.error);
+            } else if (nextAuthRes?.ok) {
+                router.push("/students_list"); // Redirect to students_list after successful Google signup & setup
+            } else {
+                // Handle cases where nextAuthRes is not error or ok (e.g., if redirect is true by default)
+                router.push("/students_list"); // Assume success and redirect
             }
+
         } catch (error) {
             console.error("Erreur d'inscription Google:", error);
-            setError("Une erreur est survenue lors de l'inscription avec Google");
+            if (error.code === 'auth/popup-closed-by-user') {
+                setError("Opération annulée par l'utilisateur.");
+            } else if (error.code && error.message) {
+                setError(`Inscription Google échouée: ${error.message}`);
+            } else {
+                setError("Une erreur est survenue lors de l'inscription avec Google.");
+            }
         } finally {
             setGoogleLoading(false);
         }
@@ -93,7 +144,7 @@ export default function SignUpPage() {
                     S'inscrire
                 </h1>
 
-                <form onSubmit={handleSignUp}>
+                <form onSubmit={handleEmailPasswordSignUp}> {/* Updated to call the new handler */}
                     <input
                         type="email"
                         placeholder="Email"
